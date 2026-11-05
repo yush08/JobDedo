@@ -1,0 +1,163 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-error: var(--error);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ---------------------------------------------------------------------------
+   JobDedo design tokens
+   Clean UI + subtle Neo-Brutalism: thin borders, restrained offset shadows,
+   generous whitespace, strong typography. No gradients or glassmorphism.
+   --------------------------------------------------------------------------- */
+:root {
+  --background: #f8f9fb;
+  --foreground: #17191f;
+  --card: #ffffff;
+  --card-foreground: #17191f;
+  --popover: #ffffff;
+  --popover-foreground: #17191f;
+  --primary: #3563f5;
+  --primary-foreground: #ffffff;
+  --secondary: #eef1f6;
+  --secondary-foreground: #17191f;
+  --muted: #f1f3f7;
+  --muted-foreground: #6b7280;
+  --accent: #e9eefe;
+  --accent-foreground: #2447b8;
+  --destructive: #dc2626;
+  --border: #d8dce4;
+  --input: #d8dce4;
+  --ring: #3563f5;
+  --success: #15803d;
+  --warning: #d97706;
+  --error: #dc2626;
+  --chart-1: #3563f5;
+  --chart-2: #15803d;
+  --chart-3: #d97706;
+  --chart-4: #7c3aed;
+  --chart-5: #0891b2;
+  --radius: 0.625rem;
+
+  --sidebar: #ffffff;
+  --sidebar-foreground: #17191f;
+  --sidebar-primary: #3563f5;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef2fe;
+  --sidebar-accent-foreground: #2447b8;
+  --sidebar-border: #e2e5ec;
+  --sidebar-ring: #3563f5;
+
+  /* Geist is loaded by next/font in the root layout. */
+  --font-sans: var(--font-geist-sans, "Geist", ui-sans-serif, system-ui, sans-serif);
+}
+
+.dark {
+  --background: #0f1115;
+  --foreground: #f3f4f6;
+  --card: #161a21;
+  --card-foreground: #f3f4f6;
+  --popover: #161a21;
+  --popover-foreground: #f3f4f6;
+  --primary: #4c76ff;
+  --primary-foreground: #ffffff;
+  --secondary: #1f242d;
+  --secondary-foreground: #f3f4f6;
+  --muted: #1c2028;
+  --muted-foreground: #9aa1ad;
+  --accent: #1e2740;
+  --accent-foreground: #b9c8ff;
+  --destructive: #ef4444;
+  --border: #2a2f39;
+  --input: #2a2f39;
+  --ring: #4c76ff;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
+  --sidebar: #12151b;
+  --sidebar-foreground: #f3f4f6;
+  --sidebar-primary: #4c76ff;
+  --sidebar-accent: #1e2740;
+  --sidebar-accent-foreground: #b9c8ff;
+  --sidebar-border: #262b34;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans scroll-smooth;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+}
+
+@layer components {
+  /* Subtle elevation for cards. */
+  .card-shadow {
+    box-shadow:
+      0 1px 2px rgb(23 25 31 / 0.04),
+      0 6px 16px -8px rgb(23 25 31 / 0.1);
+  }
+  /* Restrained neo-brutalist offset shadow — used sparingly. */
+  .neo-shadow {
+    box-shadow: 3px 3px 0 0 rgb(23 25 31 / 0.9);
+  }
+  .neo-shadow-sm {
+    box-shadow: 2px 2px 0 0 rgb(23 25 31 / 0.85);
+  }
+  .neo-shadow-primary {
+    box-shadow: 3px 3px 0 0 var(--primary);
+  }
+}

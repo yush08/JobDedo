@@ -194,7 +194,7 @@ export function MatchExplanationCard({
         )}
 
         <p className="text-[11px] text-muted-foreground">
-          JobDedo's own estimate of fit against your profile — not an employer
+          JobDedo&apos;s own estimate of fit against your profile — not an employer
           ATS score, and not a prediction of whether you will be shortlisted.
         </p>
       </CardContent>

@@ -363,23 +363,6 @@ export async function runManualRecheck(
   }
   historyEntries.push(history);
 
-  // Append all history entries.
-  const appendedHistory: Omit<VerificationHistoryEntry, "id">[] = [];
-  for (const entry of historyEntries) {
-    // Build the history entry with the computed id
-    const entryId = `${job.id}-${entry.check_type}-${Date.now()}`;
-    appendedHistory.push({
-      job_id: entry.job_id,
-      check_type: entry.check_type,
-      result: entry.result,
-      evidence_url: entry.evidence_url,
-      notes: entry.notes,
-      source: entry.source,
-      created_at: entry.created_at,
-      id: entryId,
-    });
-  }
-
   // Recompute confidence from all gathered evidence.
   const breakdown = computeConfidence(verification, job);
   verification.confidence_breakdown = breakdown;
@@ -388,5 +371,5 @@ export async function runManualRecheck(
   // Updated timestamps.
   verification.updated_at = ts;
 
-  return { verification, jobStatus, history: appendedHistory[appendedHistory.length - 1] };
+  return { verification, jobStatus, history };
 }

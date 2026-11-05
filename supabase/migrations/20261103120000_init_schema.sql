@@ -529,7 +529,7 @@ create table if not exists resume_projects (
     default '00000000-0000-4000-8000-000000000001' references profiles (id) on delete cascade,
   name             text not null default '',
   original_resume_id uuid references resumes (id) on delete set null,
-  active_version_id uuid not null default gen_random_uuid(),
+  active_version_id uuid,
   template_id      text not null default 'minimal',
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
@@ -551,7 +551,7 @@ create table if not exists resume_compilations (
   source_version_id uuid not null references resume_source_versions (id) on delete cascade,
   status           text not null default 'pending'
     check (status in ('pending','success','failed')),
-  pdf_artifact_id  uuid not null default gen_random_uuid(),
+  pdf_artifact_id  uuid,
   log              text not null default '',
   warnings         jsonb not null default '[]'::jsonb,
   errors           jsonb not null default '[]'::jsonb,
@@ -568,10 +568,23 @@ create table if not exists resume_artifacts (
   content_hash     text not null default '',
   created_at       timestamptz not null default now()
 );
-alter table if not exists resume_projects add constraint fk_resume_projects_active_version foreign key (active_version_id) references resume_source_versions (id) on delete set null;
-alter table if not exists resume_source_versions add constraint fk_resume_source_versions_project foreign key (project_id) references resume_projects (id) on delete cascade;
-alter table if not exists resume_compilations add constraint fk_resume_compilations_pdf_artifact foreign key (pdf_artifact_id) references resume_artifacts (id) on delete set null;
-alter table if not exists resume_artifacts add constraint fk_resume_artifacts_compilation foreign key (compilation_id) references resume_compilations (id) on delete set null;
+-- PostgreSQL supports IF EXISTS when naming the table, but not IF NOT EXISTS
+-- there. Guard constraints explicitly so this idempotent migration is valid.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'fk_resume_projects_active_version' and conrelid = 'public.resume_projects'::regclass) then
+    alter table resume_projects add constraint fk_resume_projects_active_version foreign key (active_version_id) references resume_source_versions (id) on delete set null;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'fk_resume_source_versions_project' and conrelid = 'public.resume_source_versions'::regclass) then
+    alter table resume_source_versions add constraint fk_resume_source_versions_project foreign key (project_id) references resume_projects (id) on delete cascade;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'fk_resume_compilations_pdf_artifact' and conrelid = 'public.resume_compilations'::regclass) then
+    alter table resume_compilations add constraint fk_resume_compilations_pdf_artifact foreign key (pdf_artifact_id) references resume_artifacts (id) on delete set null;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'fk_resume_artifacts_compilation' and conrelid = 'public.resume_artifacts'::regclass) then
+    alter table resume_artifacts add constraint fk_resume_artifacts_compilation foreign key (compilation_id) references resume_compilations (id) on delete set null;
+  end if;
+end $$;
 
 
 /* ------------------------------------------------------------------ */

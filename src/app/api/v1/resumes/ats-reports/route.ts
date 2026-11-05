@@ -14,7 +14,7 @@ export const GET = withErrorHandling(async (request: Request) => {
   let filtered = reports;
   if (resumeId) {
     filtered = reports.filter((r) =>
-      r.resume_version_id === resumeId || (r.report as any)?.resume_id === resumeId
+      r.resume_version_id === resumeId || r.report.resume_id === resumeId
     );
   }
 

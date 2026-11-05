@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import type { Metadata } from "next";
 import {
   Info,
   Mail,
@@ -13,42 +12,68 @@ import {
   Copy,
 } from "lucide-react";
 
-import { useRouter } from "next/navigation";
 
 import { PageHeader } from "@/components/layout/page-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { formatDate } from "@/lib/utils/format";
+import type { EmailDraft, Recruiter, ResumeVersion } from "@/types";
+
+type DraftType = EmailDraft["draft_type"];
+
+interface GeneratedDraft extends EmailDraft {
+  associatedJob?: { title: string; company: string; description: string } | null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function responseItems(value: unknown, key: string): unknown[] {
+  if (!isRecord(value)) return [];
+  if (Array.isArray(value[key])) return value[key];
+  return isRecord(value.data) && Array.isArray(value.data[key]) ? value.data[key] : [];
+}
+
+function isRecruiter(value: unknown): value is Recruiter {
+  return isRecord(value) && typeof value.id === "string" && typeof value.name === "string" &&
+    typeof value.title === "string" && typeof value.evidence_url === "string" &&
+    (value.verification_status === "public_confirmed" || value.verification_status === "uncertain" || value.verification_status === "not_found");
+}
+
+function isEmailDraft(value: unknown): value is GeneratedDraft {
+  return isRecord(value) && typeof value.id === "string" && typeof value.subject === "string" &&
+    typeof value.body === "string" && typeof value.draft_type === "string" && typeof value.status === "string";
+}
+
+function isResumeVersion(value: unknown): value is ResumeVersion {
+  return isRecord(value) && typeof value.id === "string" && typeof value.resume_id === "string" &&
+    typeof value.version_number === "number";
+}
 
 export interface OutreachPageClientProps {
   resumeVersionId?: string;
-  onDraftSave?: (draft: any) => void;
+  onDraftSave?: (draft: EmailDraft) => void;
 }
 
-export const metadata: Metadata = {
-  title: "Cold Email Assistant",
-};
-
 export default function OutreachClient({
-  resumeVersionId,
+  resumeVersionId: initialResumeVersionId,
   onDraftSave,
 }: OutreachPageClientProps) {
-  const router = useRouter();
-
   // --- State ---
-  const [recruiters, setRecruiters] = useState<any[]>([]);
-  const [drafts, setDrafts] = useState<any[]>([]);
+  const [recruiters, setRecruiters] = useState<Recruiter[]>([]);
+  const [drafts, setDrafts] = useState<GeneratedDraft[]>([]);
+  const [versions, setVersions] = useState<ResumeVersion[]>([]);
   const [selectedResumeVersion, setSelectedResumeVersion] = useState<string>(
     "",
   );
-  const [selectedDraft, setSelectedDraft] = useState<any | null>(null);
+  const [selectedDraft, setSelectedDraft] = useState<GeneratedDraft | null>(null);
   const [showDraftDialog, setShowDraftDialog] = useState(false);
-  const [draftType, setDraftType] = useState<string>("hiring_manager_intro");
+  const [draftType, setDraftType] = useState<DraftType>("hiring_manager_intro");
   const [jobDescription, setJobDescription] = useState<string>("");
   const [subject, setSubject] = useState<string>("");
   const [body, setBody] = useState<string>("");
@@ -56,96 +81,58 @@ export default function OutreachClient({
   const [error, setError] = useState<string | null>(null);
   const [showRecruiterContacts, setShowRecruiterContacts] = useState(true);
 
-  // --- Load data via API routes (client-side only) ---
-  useEffect(() => {
-    (async () => {
-      try {
-        // Fetch recruiter contacts from API
-        const recruitersRes = await fetch("/api/v1/outreach/recruiters", {
-          credentials: "include",
-        });
-        if (recruitersRes.ok) {
-          const data = await recruitersRes.json();
-          setRecruiters(
-            data.recruiters || data.data?.recruiters || [],
-          );
-        }
-        // Fetch drafts from API
-        const draftsRes = await fetch("/api/v1/outreach/drafts", {
-          credentials: "include",
-        });
-        if (draftsRes.ok) {
-          const data = await draftsRes.json();
-          setDrafts(data.drafts || data.data?.drafts || []);
-        }
-        // Fetch resume versions from API
-        const versionsRes = await fetch("/api/v1/resumes/versions", {
-          credentials: "include",
-        });
-        if (versionsRes.ok) {
-          const data = await versionsRes.json();
-          const versions = data.versions || data.data?.versions || [];
-          setSelectedResumeVersion(
-            versions.length > 0 ? versions[0].id : "",
-          );
-          // Store versions for rendering (we'll render from the stored state)
-        }
-      } catch {
-        setRecruiters([]);
-        setDrafts([]);
-      }
-    })();
-  }, []);
-
   // --- Fetch resume versions from API ---
-  const fetchResumeVersions = async () => {
+  const fetchResumeVersions = useCallback(async () => {
     try {
       const res = await fetch("/api/v1/resumes/versions", {
         credentials: "include",
       });
       if (res.ok) {
-        const data = await res.json();
-        const versions = data.versions || data.data?.versions || [];
-        setSelectedResumeVersion(
-          versions.length > 0 ? versions[0].id : "",
-        );
+        const data: unknown = await res.json();
+        const foundVersions = responseItems(data, "versions").filter(isResumeVersion);
+        setVersions(foundVersions);
+        setSelectedResumeVersion((current) => current || initialResumeVersionId || foundVersions[0]?.id || "");
       }
     } catch {
       setSelectedResumeVersion("");
     }
-  };
+  }, [initialResumeVersionId]);
 
   // --- Fetch recruiter contacts from API ---
-  const fetchRecruiters = async () => {
+  const fetchRecruiters = useCallback(async () => {
     try {
       const res = await fetch("/api/v1/outreach/recruiters", {
         credentials: "include",
       });
       if (res.ok) {
-        const data = await res.json();
-        setRecruiters(
-          data.recruiters || data.data?.recruiters || [],
-        );
+        const data: unknown = await res.json();
+        setRecruiters(responseItems(data, "recruiters").filter(isRecruiter));
       }
     } catch {
       setRecruiters([]);
     }
-  };
+  }, []);
 
   // --- Fetch drafts from API ---
-  const fetchDrafts = async () => {
+  const fetchDrafts = useCallback(async () => {
     try {
       const res = await fetch("/api/v1/outreach/drafts", {
         credentials: "include",
       });
       if (res.ok) {
-        const data = await res.json();
-        setDrafts(data.drafts || data.data?.drafts || []);
+        const data: unknown = await res.json();
+        setDrafts(responseItems(data, "drafts").filter(isEmailDraft));
       }
     } catch {
       setDrafts([]);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      void Promise.all([fetchRecruiters(), fetchDrafts(), fetchResumeVersions()]);
+    });
+  }, [fetchDrafts, fetchRecruiters, fetchResumeVersions]);
 
   // --- Generate email via API ---
   const handleGenerate = async () => {
@@ -154,20 +141,18 @@ export default function OutreachClient({
     try {
       const res = await fetch("/api/v1/outreach/draft", {
         method: "POST",
-        body: new FormData({
-          resume_version_id: selectedResumeVersion,
-          job_description: jobDescription,
-          draft_type: draftType,
-        } as any),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resumeVersionId: selectedResumeVersion, jobDescription, draftType }),
       });
-      const result = await res.json();
-      if (!res.ok) {
-        setError(result.error || "Failed to generate draft");
+      const result: unknown = await res.json();
+      const draft = isRecord(result) && isEmailDraft(result.draft) ? result.draft : null;
+      if (!res.ok || !draft) {
+        setError(isRecord(result) && typeof result.error === "string" ? result.error : "Failed to generate draft");
         return;
       }
-      setSubject(result.draft.subject);
-      setBody(result.draft.body);
-      setSelectedDraft(result.draft);
+      setSubject(draft.subject);
+      setBody(draft.body);
+      setSelectedDraft(draft);
       setShowDraftDialog(true);
     } catch (err) {
       setError(
@@ -183,24 +168,21 @@ export default function OutreachClient({
     try {
       const res = await fetch("/api/v1/outreach/draft", {
         method: "POST",
-        body: new FormData({
-          resume_version_id: selectedResumeVersion,
-          job_description: jobDescription,
-          draft_type: draftType,
-        } as any),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resumeVersionId: selectedResumeVersion, jobDescription, draftType }),
       });
-      const result = await res.json();
-      if (res.ok) {
-        setDrafts((prev) => [result.draft, ...prev]);
+      const result: unknown = await res.json();
+      const saved = isRecord(result) && isEmailDraft(result.draft) ? result.draft : null;
+      if (res.ok && saved) {
+        const editedDraft: GeneratedDraft = { ...saved, subject: subject.trim() || saved.subject, body: body.trim() || saved.body };
+        setDrafts((prev) => [editedDraft, ...prev]);
         setShowDraftDialog(false);
         setError(null);
         if (typeof onDraftSave === "function") {
-          onDraftSave(result.draft);
+          onDraftSave(editedDraft);
         }
       } else {
-        setError(
-          result.error || "Failed to save draft",
-        );
+        setError(isRecord(result) && typeof result.error === "string" ? result.error : "Failed to save draft");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -222,78 +204,6 @@ export default function OutreachClient({
     }
   };
 
-  // --- Open recruiter contact ---
-  const handleOpenRecruiter = (r: any) => {
-    window.open(r.evidence_url, "_blank");
-  };
-
-  // --- Parse resume content ---
-  const parseResumeContent = (
-    latexSource: string,
-  ): {
-    fullName: string;
-    summary: string | undefined;
-    experiences: string[];
-    skills: string | undefined;
-    projects: string | undefined;
-    achievements: string | undefined;
-  } => {
-    const result = {
-      fullName: "Candidate",
-      summary: undefined,
-      experiences: [],
-      skills: undefined,
-      projects: undefined,
-      achievements: undefined,
-    };
-
-    const nameMatch = latexSource.match(
-      /\\textbf{([^}]+)}/,
-    );
-    if (nameMatch && nameMatch[1]) {
-      result.fullName = nameMatch[1].trim();
-    }
-
-    const summaryMatch = latexSource.match(
-      /\\section\*\{Professional Summary\}([^}]*)\\end\{paragraph\}/,
-    );
-    if (summaryMatch?.[1]) {
-      // @ts-ignore
-      result.summary = summaryMatch![1].trim();
-    }
-
-    const expRegex = /\\section\*\{Experience\}([^}]*)\\end\{paragraph\}/;
-    const expMatch = latexSource.match(expRegex);
-    if (expMatch?.[1]) {
-      // @ts-ignore
-      result.experiences = [expMatch![1].trim()];
-    }
-
-    const skillsMatch = latexSource.match(
-      /\\section\*\{Skills\}([^}]*)\\end\{paragraph\}/,
-    );
-    if (skillsMatch?.[1]) {
-      // @ts-ignore
-      result.skills = skillsMatch![1].trim();
-    }
-
-    const projRegex = /\\section\*\{Projects\}([^}]*)\\end\{paragraph\}/;
-    const projMatch = latexSource.match(projRegex);
-    if (projMatch?.[1]) {
-      // @ts-ignore
-      result.projects = projMatch![1].trim();
-    }
-
-    const achRegex = /\\section\*\{Achievements\}([^}]*)\\end\{paragraph\}/;
-    const achMatch = latexSource.match(achRegex);
-    if (achMatch?.[1]) {
-      // @ts-ignore
-      result.achievements = achMatch![1].trim();
-    }
-
-    return result;
-  };
-
   return (
     <div className="space-y-6">
       <PageHeader
@@ -306,11 +216,13 @@ export default function OutreachClient({
         }
       />
 
+      {error && <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>}
+
       <div className="flex items-start gap-2 rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-sm">
         <Info className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
         <p>
           <strong className="font-medium">Email drafts</strong> are saved with
-          their status (draft → approved → sent) and always require your approval
+          their status (draft ΓåÆ approved ΓåÆ sent) and always require your approval
           before sending. Recruiter contacts are only stored with a public source
           URL as evidence. No email addresses are ever guessed or synthesized.
         </p>
@@ -424,7 +336,7 @@ export default function OutreachClient({
                         <p className="text-[11px] text-muted-foreground">
                           {DRAFT_TYPE_LABEL[
                             draft.draft_type
-                          ] ?? draft.draft_type} ·
+                          ] ?? draft.draft_type} ┬╖
                           {formatDate(draft.created_at)}
                         </p>
                       </div>
@@ -469,7 +381,7 @@ export default function OutreachClient({
           {isGenerating ? (
             <div className="flex items-center gap-3">
               <Loader2 className="size-4 mr-2 animate-spin" />
-              <span>Generating draft…</span>
+              <span>Generating draftΓÇª</span>
             </div>
           ) : (
             <form onSubmit={(e) => {
@@ -490,13 +402,11 @@ export default function OutreachClient({
                     value={selectedResumeVersion}
                   >
                     <option value="">Select a resume version</option>
-                    {selectedResumeVersion && (
-                      <option
-                        value={selectedResumeVersion}
-                      >
-                        Version {selectedResumeVersion.slice(0, 8)}...
+                    {versions.map((version) => (
+                      <option key={version.id} value={version.id}>
+                        Version {version.version_number}
                       </option>
-                    )}
+                    ))}
                   </select>
                   <p className="text-[10px] text-muted-foreground mt-1">
                     Upload a resume in Resume Studio or select an existing version.
@@ -510,11 +420,11 @@ export default function OutreachClient({
                   <select
                     value={draftType}
                     onChange={(e) =>
-                      setDraftType(e.target.value || "hiring_manager_intro")
+                      setDraftType((e.target.value || "hiring_manager_intro") as DraftType)
                     }
                   >
                     <option value="">Select draft type</option>
-                    {"hiring_manager_intro follow_up referral_request thank_you internship_outreach generic".split(
+                    {"hiring_manager_intro recruiter_intro follow_up referral_request thank_you internship_outreach".split(
                       " ",
                     ).map((key) => (
                       <option key={key} value={key}>
@@ -538,7 +448,7 @@ export default function OutreachClient({
                   minLength={20}
                 />
                 <p className="text-[10px] text-muted-foreground mt-1">
-                  Required — at least 20 characters for analysis.
+                  Required ΓÇö at least 20 characters for analysis.
                 </p>
               </div>
 
@@ -563,7 +473,7 @@ export default function OutreachClient({
           )}
 
           {/* --- Generated email editor --- */}
-          {selectedDraft && !isGenerating && (
+          {selectedDraft && showDraftDialog && !isGenerating && (
             <div className="mt-4 p-4 rounded-lg border bg-primary/10">
               <h3 className="text-sm font-medium mb-3">
                 Preview Email
@@ -642,7 +552,7 @@ export default function OutreachClient({
                 <Play className="size-4 mr-2" /> Generate Email
               </p>
               <p className="text-[10px] text-muted-foreground mt-1">
-                The draft will use real content from your resume — no invented
+                The draft will use real content from your resume ΓÇö no invented
                 experience or achievements.
               </p>
             </div>

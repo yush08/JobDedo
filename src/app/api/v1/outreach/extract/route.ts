@@ -1,6 +1,26 @@
 import { withErrorHandling } from "@/lib/api/responses";
 import { randomUUID } from "node:crypto";
 
+interface ExtractRequest {
+  input?: unknown;
+  source?: unknown;
+}
+
+interface Extraction {
+  jobTitle: string;
+  company: string;
+  recipientEmail: string;
+  ccEmail: string;
+  subject: string;
+  instructions: string;
+  requiredAttachments: string[];
+  deadline: null;
+  originalUrl?: string;
+  originalPlatform: string;
+  supportingEvidence: string;
+  confidence: number;
+}
+
 /**
  * POST /api/v1/outreach/extract — Email-based job extraction (M6).
  *
@@ -25,18 +45,20 @@ export const POST = withErrorHandling(async (request: Request) => {
     );
   }
 
-  let data: any;
+  let data: ExtractRequest;
 
   if (contentType.startsWith("multipart/form-data")) {
     const formData = await request.formData();
-    const input = formData.get("input") as string | null;
-    const source = formData.get("source") as string | null; // "url" or "text"
+    const input = formData.get("input");
+    const source = formData.get("source");
     data = { input, source };
   } else {
-    data = await request.json();
+    const body: unknown = await request.json();
+    data = typeof body === "object" && body !== null ? body as ExtractRequest : {};
   }
 
-  const { input, source } = data;
+  const input = typeof data.input === "string" ? data.input : "";
+  const source = typeof data.source === "string" ? data.source : "text";
 
   if (!input || input.trim().length === 0) {
     return new Response(
@@ -46,7 +68,7 @@ export const POST = withErrorHandling(async (request: Request) => {
   }
 
   // Perform extraction based on source type
-  let extraction: any;
+  let extraction: Extraction;
 
   if (source === "url") {
     extraction = extractFromUrl(input);
@@ -74,7 +96,7 @@ export const POST = withErrorHandling(async (request: Request) => {
 });
 
 /** Extract job details from a URL (public content only). */
-function extractFromUrl(url: string): any {
+function extractFromUrl(url: string): Extraction {
   // In a production implementation, this would use authorized APIs only.
   // Never bypass login, CAPTCHA or anti-bot systems.
   // For now, return a structured result with low confidence
@@ -96,7 +118,7 @@ function extractFromUrl(url: string): any {
 }
 
 /** Extract job details from pasted text. */
-function extractFromText(text: string): any {
+function extractFromText(text: string): Extraction {
   const lower = text.toLowerCase();
 
   // Try to identify basic fields from the text

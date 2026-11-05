@@ -101,7 +101,7 @@ export function buildEmptyCollections(profileId: ID): Omit<Collections, "profile
   };
 }
 
-export function buildEmptySources(): (typeof SAMPLE_SOURCE_KEYS)[number][] {
+export function buildEmptySources(): JobSource[] {
   return SAMPLE_SOURCE_KEYS.map((s) => ({
     id: `00000000-0000-4000-8000-0000000000a${SAMPLE_SOURCE_KEYS.indexOf(s) + 1}`,
     key: s.key,

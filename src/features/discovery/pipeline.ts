@@ -55,7 +55,7 @@ export interface DiscoverySourceResult {
   requests: number;
   /** Source-level error (adapter crashed), empty when none. */
   error: string;
-  failures: Array<{ target: string; error: string }> | undefined;
+  failures: Array<{ target: string; error: string }>;
 }
 
 export interface DiscoveryRunSummary {

@@ -1,6 +1,23 @@
 import { withErrorHandling } from "@/lib/api/responses";
 import { getDataStore } from "@/lib/db";
 import { randomUUID } from "node:crypto";
+import type { EmailDraft } from "@/types";
+
+interface DraftRequest {
+  resumeVersionId?: unknown;
+  jobDescription?: unknown;
+  draftType?: unknown;
+}
+
+function asText(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+const DRAFT_TYPES = ["internship_outreach", "recruiter_intro", "hiring_manager_intro", "follow_up", "referral_request", "thank_you"] as const;
+
+function isDraftType(value: string): value is EmailDraft["draft_type"] {
+  return (DRAFT_TYPES as readonly string[]).includes(value);
+}
 
 /**
  * POST /api/v1/outreach/draft — Generate a cold-email draft
@@ -30,19 +47,23 @@ export const POST = withErrorHandling(async (request: Request) => {
     );
   }
 
-  let data: any;
+  let data: DraftRequest;
 
   if (contentType.startsWith("multipart/form-data")) {
     const formData = await request.formData();
-    const resumeVersionId = formData.get("resume_version_id") as string;
-    const jobDescription = formData.get("job_description") as string;
-    const draftType = formData.get("draft_type") as string;
+    const resumeVersionId = formData.get("resume_version_id");
+    const jobDescription = formData.get("job_description");
+    const draftType = formData.get("draft_type");
     data = { resumeVersionId, jobDescription, draftType };
   } else {
-    data = await request.json();
+    const body: unknown = await request.json();
+    data = typeof body === "object" && body !== null ? body as DraftRequest : {};
   }
 
-  const { resumeVersionId, jobDescription, draftType } = data;
+  const resumeVersionId = asText(data.resumeVersionId);
+  const jobDescription = asText(data.jobDescription);
+  const draftType = asText(data.draftType);
+  const selectedDraftType = isDraftType(draftType) ? draftType : "hiring_manager_intro";
 
   if (!resumeVersionId) {
     return new Response(
@@ -60,11 +81,10 @@ export const POST = withErrorHandling(async (request: Request) => {
     );
   }
 
-  const db: any = getDataStore();
+  const db = getDataStore();
 
-  // Read the resume version to get the latex_source and structured content
-  const allVersions: any[] = await db.listResumeSourceVersions();
-  const version: any = allVersions.find((v: any) => v.id === resumeVersionId);
+  const allVersions = await db.listResumeVersions();
+  const version = allVersions.find((v) => v.id === resumeVersionId);
 
   if (!version) {
     return new Response(
@@ -73,11 +93,8 @@ export const POST = withErrorHandling(async (request: Request) => {
     );
   }
 
-  // Read the associated resume to get the title and extracted text
-  const allResumes: any[] = await db.listResumes();
-  const resume: any = allResumes.find(
-    (r: any) => r.id === version.resume_id || r.current_version_id === version.id
-  );
+  const allResumes = await db.listResumes();
+  const resume = allResumes.find((item) => item.id === version.resume_id);
 
   if (!resume) {
     return new Response(
@@ -86,10 +103,9 @@ export const POST = withErrorHandling(async (request: Request) => {
     );
   }
 
-  // --- Extract real resume content from latex_source ---
-  // We use best-effort text extraction from the stored LaTeX source.
+  // --- Extract real resume content from the stored raw text ---
   // Only verifiable facts are used; nothing is invented.
-  const latexSource: string = version.latex_source || "";
+  const latexSource = version.raw_text;
 
   // Helper: get text between a section marker and the next section or end
   function getSectionText(source: string, sectionName: string): string {
@@ -206,7 +222,7 @@ export const POST = withErrorHandling(async (request: Request) => {
   let subject = "";
   let body = "";
 
-  switch (draftType) {
+  switch (selectedDraftType) {
     case "hiring_manager_intro": {
       const techSkills = skills && typeof skills === "string" ? skills : "";
       subject = `Inquiry about ${jobTitle} at ${company}`;
@@ -302,26 +318,6 @@ ${personalInfo.full_name || "Candidate"}`;
       break;
     }
 
-    case "generic": {
-      const skillsPart = skills && typeof skills === "string" ? ` My skills include ${skills}.` : "";
-      const expPart =
-        experiences && Array.isArray(experiences) && experiences.length > 0
-          ? ` My experience includes: ${experiences.join(", ")}.`
-          : "";
-      subject = `Introduction and opportunity inquiry — ${personalInfo.full_name || "Candidate"}`;
-      body = `Dear Hiring Manager,
-
-I am writing to express my interest in potential opportunities at ${company}. With my background${skillsPart} ${expPart} I believe I could make a valuable contribution to your team.
-
-${candidateLines.length > 0 ? ` ${candidateLines.join(" ")}` : ""}
-
-I am particularly drawn to ${company} because of their mission. I would welcome the opportunity to discuss how my background and skills could support your team's goals.
-
-Best regards,
-${personalInfo.full_name || "Candidate"}`;
-      break;
-    }
-
     default: {
       subject = `Inquiry about ${jobTitle} at ${company}`;
       body = `Dear Hiring Manager,
@@ -344,7 +340,15 @@ ${personalInfo.full_name || "Candidate"}`;
 
   const draftId = randomUUID();
 
-  const draft: any = {
+  const draft: Pick<EmailDraft, "id" | "subject" | "body" | "draft_type" | "status"> & {
+    recipient: string;
+    associatedJob: { title: string; company: string; description: string } | null;
+    sourceUrl: { type: string; url: string; note: string } | null;
+    contactEvidence: { type: string; url: string; note: string } | null;
+    resumeVersionId: string;
+    createdAt: string;
+    updatedAt: string;
+  } = {
     id: draftId,
     recipient: personalInfo.email || "",
     subject: subject.trim(),
@@ -362,7 +366,7 @@ ${personalInfo.full_name || "Candidate"}`;
         ? { type: "email", url: `mailto:${personalInfo.email}`, note: "Provided by user" }
         : null,
     resumeVersionId: resumeVersionId,
-    draft_type: draftType || "hiring_manager_intro",
+    draft_type: selectedDraftType,
     status: "draft",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

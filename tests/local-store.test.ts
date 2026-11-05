@@ -35,6 +35,7 @@ interface DiskState {
   savedJobs: unknown[];
   roles: unknown[];
   verifications: { job_id: string }[];
+  verificationHistory?: VerificationHistoryEntry[];
   notifications: AppNotification[];
 }
 
@@ -211,8 +212,7 @@ describe("LocalStore — jobs, matches and verification", () => {
       recommendations: [],
     });
 
-    const matches = await store.listSavedJobIds(); // actually list matches
-    // Just verify the upsert doesn't throw.
+    expect(await store.listSavedJobIds()).toEqual([]);
   });
 
   it("upserts verification rows by job_id and updates job headline fields", async () => {
@@ -229,7 +229,7 @@ describe("LocalStore — jobs, matches and verification", () => {
     // No sample jobs exist, so there are 0 verification rows from seeds.
     expect(rows).toHaveLength(0);
     expect(rows.filter((r) => r.job_id === job.id)).toHaveLength(0);
-    expect(await store.getVerification(job.id))?.confidence_score;
+    expect((await store.getVerification(job.id))?.confidence_score).toBe(77);
 
     // Unknown jobs are a silent no-op, never a crash.
     await store.updateJobVerificationFields(job.id, {

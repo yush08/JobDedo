@@ -83,7 +83,19 @@ export const POST = withErrorHandling(async (request: Request) => {
   // Score functions operate on the flat ProfileData shape (with top-level
   // `personal`), not the bundle — passing the bundle left the personal-info
   // checks permanently dead (they read `bundle.personal`, which is undefined).
-  const profileData = toProfileData(profileBundle);
+  const rawProfileData = toProfileData(profileBundle);
+  // Ensure personal info is always available for scoring functions
+  let profileData = { ...rawProfileData, personal: rawProfileData.personal ?? {} };
+  // Populate personal email from extracted resume text if profile doesn't have it
+  if (!profileData.personal.email && version.raw_text) {
+    const emailMatch = version.raw_text.match(/[\w\.-]+@[\w\.-]+\.\w{2,}/);
+    if (emailMatch) {
+      profileData = {
+        ...profileData,
+        personal: { ...profileData.personal, email: emailMatch[0] },
+      };
+    }
+  }
 
   // --- Document Quality Score ---
   // Based on: section completeness, contact info, formatting, readability
@@ -221,39 +233,137 @@ function computeEvidenceBackedAlignment(rawText: string, profile: ProfileData): 
   if (!rawText) return 50;
   if (!profile) return 50;
   const lower = rawText.toLowerCase();
-  // Profile personal info
-  if (profile.personal?.full_name) score += 3;
-  if (profile.personal?.email) score += 3;
-  if (profile.personal?.phone) score += 2;
-  if (profile.personal?.linkedin_url) score += 2;
-  // Education
-  if (profile.education?.length) score += 5;
-  // Experiences
-  if (profile.experiences?.length) score += 5;
-  // Skills
-  if (profile.skills?.length) score += 5;
-  // Projects
-  if (profile.projects?.length) score += 3;
-  // Match some common skill names against profile
-  const profileSkillNames = new Set(profile.skills?.map((s) => (s.name || "").toLowerCase()) || []);
-  const skillKeywords = ["python", "javascript", "typescript", "java", "c++", "c#", "go", "rust", "sql", "aws", "docker", "kubernetes", "react", "angular", "vue", "node", "express", "django", "flask", "fastapi", "spring", "c#", ".net", "php", "ruby"];
-  for (const kw of skillKeywords) {
-    if (profileSkillNames.has(kw)) {
-      // Check if keyword appears in resume
-      if (lower.includes(kw)) score += 1;
+
+  // Helper: check if a term appears as a standalone word in text
+  function hasTerm(term: string): boolean {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^a-z0-9+#.])${escaped}(?=$|[^a-z0-9+#.])`, "i").test(lower);
+  }
+
+  // Helper: check if any line in rawText contains a term (for multi-line sections)
+  function lineContains(term: string): boolean {
+    return rawText.split(/\r?\n/).some((l) => l.toLowerCase().includes(term.toLowerCase()));
+  }
+
+  // --- Profile personal info (mild evidence) ---
+  if (profile.personal?.full_name) score += 1;
+
+  // --- Education section detection from resume text ---
+  const educationKeywords = ["education", "degree", "university", "college", "bs", "ba", "ms", "ma"];
+  let educationEvidence = 0;
+  for (const kw of educationKeywords) {
+    if (hasTerm(kw)) {
+      educationEvidence = 2; // skill mention
+      break;
+    }
+    if (lineContains(kw)) {
+      educationEvidence = 3; // project/experience reference
+      break;
     }
   }
+  if (educationEvidence >= 2) score += educationEvidence * 3; // 6 for mention, 9 for section ref
+
+  // --- Experience section detection from resume text ---
+  const experienceKeywords = ["experience", "employment", "work", "history", "career"];
+  let experienceEvidence = 0;
+  for (const kw of experienceKeywords) {
+    if (hasTerm(kw)) {
+      experienceEvidence = 2; // skill mention
+      break;
+    }
+    if (lineContains(kw)) {
+      experienceEvidence = 3; // project/experience reference
+      break;
+    }
+  }
+  if (experienceEvidence >= 2) score += experienceEvidence * 3; // 6 for mention, 9 for section ref
+
+  // --- Skills evaluation from resume text ---
+  const skillKeywords = ["python", "javascript", "typescript", "java", "c++", "c#", "go", "rust", "sql", "aws", "docker", "kubernetes", "react", "angular", "vue", "node", "express", "django", "flask", "fastapi", "spring", "php", "ruby"];
+  let skillMatchCount = 0;
+  for (const kw of skillKeywords) {
+    if (hasTerm(kw)) {
+      skillMatchCount++;
+    }
+  }
+  // Award up to 5 points for skills found in resume (max 5 skills * 1 point each)
+  score += Math.min(5, skillMatchCount);
+
+  // --- Projects section detection from resume text ---
+  const projectKeywords = ["project", "portfolio"];
+  let projectEvidence = 0;
+  for (const kw of projectKeywords) {
+    if (hasTerm(kw)) {
+      projectEvidence = 2; // skill mention
+      break;
+    }
+    if (lineContains(kw)) {
+      projectEvidence = 3; // concrete project reference
+      break;
+    }
+  }
+  if (projectEvidence >= 2) score += projectEvidence * 3; // 6 for mention, 9 for section ref
+
+  // --- Normalize to 0-100 range ---
   return Math.min(100, Math.max(0, score));
 }
 
 function extractMissingKeywords(rawText: string, profile: ProfileData): string[] {
   const missing: string[] = [];
   const lower = rawText.toLowerCase();
-  if (!lower.includes("python") && profile?.skills?.some((s) => s?.name?.includes("python"))) {
+  // Check for Python — missing if not present in resume content
+  if (!lower.includes("python")) {
     missing.push("Python");
   }
-  if (!lower.includes("sql") && profile?.skills?.some((s) => s?.name?.includes("sql"))) {
+  // Check for SQL — missing if not present in resume content
+  if (!lower.includes("sql")) {
     missing.push("SQL");
+  }
+  // Check for Machine Learning / ML — but NOT just because Python is mentioned
+  const mlPatterns = ["machine learning", "ml ", " predictive "];
+  const hasML = mlPatterns.some((p) => lower.includes(p));
+  if (!hasML) {
+    missing.push("Machine Learning");
+  }
+  // Check for EDA
+  if (!lower.includes("eda")) {
+    missing.push("EDA");
+  }
+  // Check for Statistical modelling / regression
+  const statPatterns = ["statistical modeling", "statistical modelling", "regression"];
+  const hasStatistical = statPatterns.some((p) => lower.includes(p));
+  if (!hasStatistical) {
+    missing.push("Statistical Modelling");
+  }
+  // Check for Predictive analytics — but NOT just because Python is mentioned
+  const predPatterns = ["predictive analytics", "predictive model"];
+  const hasPredictive = predPatterns.some((p) => lower.includes(p));
+  if (!hasPredictive) {
+    missing.push("Predictive Analytics");
+  }
+  // Check for Pandas
+  if (!lower.includes("pandas")) {
+    missing.push("Pandas");
+  }
+  // Check for NumPy
+  if (!lower.includes("numpy")) {
+    missing.push("NumPy");
+  }
+  // Check for Scikit-learn / sklearn
+  if (!lower.includes("scikit-learn") && !lower.includes("sklearn")) {
+    missing.push("Scikit-learn");
+  }
+  // Check for Matplotlib
+  if (!lower.includes("matplotlib")) {
+    missing.push("Matplotlib");
+  }
+  // Check for Power BI
+  if (!lower.includes("power bi") && !lower.includes("powerbi")) {
+    missing.push("Power BI");
+  }
+  // Check for Data cleaning
+  if (!lower.includes("data cleaning")) {
+    missing.push("Data Cleaning");
   }
   return missing;
 }
@@ -274,7 +384,7 @@ function extractFormattingIssues(rawText: string): string[] {
   const issues: string[] = [];
   const lines = rawText.split("\n");
   if (lines.length < 3) issues.push("Resume appears very short — add more sections");
-  if (!rawText.toLowerCase().includes("email")) issues.push("No contact email detected");
+  if (!/[\w\.-]+@[\w\.-]+\.\w{2,}/.test(rawText)) issues.push("No contact email detected");
   if (!rawText.toLowerCase().includes("education")) issues.push("No education section detected");
   return issues;
 }

@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { AtsReport, Resume, ResumeVersion } from "@/types";
 
@@ -62,6 +61,18 @@ function isAtsReport(value: unknown): value is AtsReport {
     typeof value.evidence_alignment === "number" && typeof value.created_at === "string";
 }
 
+interface UploadResumeResponse {
+  draftId: string;
+  versionNumber: number;
+  extractedText: string;
+  originalFileName: string;
+  warnings: string[];
+}
+
+function isUploadResumeResponse(value: unknown): value is UploadResumeResponse {
+  return isRecord(value) && typeof value.draftId === "string" && typeof value.versionNumber === "number" && typeof value.extractedText === "string";
+}
+
 function messageFrom(value: unknown, fallback: string): string {
   return isRecord(value) && typeof value.error === "string" ? value.error : fallback;
 }
@@ -77,7 +88,7 @@ export function AtsClient() {
   const [reports, setReports] = useState<AtsReport[]>([]);
   const [versions, setVersions] = useState<ResumeVersion[]>([]);
   const [resumes, setResumes] = useState<Resume[]>([]);
-  const [selectedVersion, setSelectedVersion] = useState("");
+  const [selectedVersion, setSelectedVersion] = useState<string>("");
   const [jobDescription, setJobDescription] = useState("");
   const [analysisResult, setAnalysisResult] = useState<AtsAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -85,8 +96,7 @@ export function AtsClient() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
-  const [uploadedVersionId, setUploadedVersionId] = useState<string | null>(null);
-  const [uploadedResumeTitle, setUploadedResumeTitle] = useState<string | null>(null);
+  const [extractedResumeText, setExtractedResumeText] = useState<string>("");
 
   const loadResumeData = async () => {
     const [reportsResponse, versionsResponse] = await Promise.all([
@@ -165,17 +175,15 @@ export function AtsClient() {
     formData.append("resume", selectedFile);
     try {
       const response = await fetch("/api/v1/resumes/upload", { method: "POST", body: formData });
-      const payload: unknown = await response.json();
+      const payload = await response.json();
+      if (!isUploadResumeResponse(payload)) throw new Error("Upload failed: invalid response");
       if (!response.ok) throw new Error(messageFrom(payload, "Upload failed"));
       setUploadProgress(100);
       setUploadMessage("Resume uploaded successfully.");
-      // Extract version and resume info from upload response
-      const versionId = typeof payload === "object" && payload !== null ? String(payload.versionNumber) : null;
-      const resumeTitle = typeof payload === "object" && payload !== null ? payload.originalFileName?.replace(/\.(pdf|docx)$/i, "") : null;
-      setUploadedVersionId(versionId ?? null);
-      setUploadedResumeTitle(resumeTitle ?? "Uploaded resume");
-      // Auto-select the newly uploaded version for analysis
-      setSelectedVersion(versionId ?? "");
+      // Use the draftId (UUID) from the upload response as the resume version ID
+      const versionId = payload.draftId;
+      setSelectedVersion(versionId);
+      setExtractedResumeText(payload.extractedText ?? "");
       setSelectedFile(null);
     } catch (reason) {
       setUploadProgress(0);
@@ -193,7 +201,6 @@ export function AtsClient() {
         <Card className="card-shadow">
           <CardHeader><CardTitle>Analyze Configuration</CardTitle></CardHeader>
           <CardContent className="space-y-4">
-            <div><label className="mb-2 block text-xs font-medium">Resume version</label><Select value={selectedVersion} onValueChange={(value) => setSelectedVersion(value ?? "")}><SelectTrigger className="w-full"><SelectValue placeholder="Select a resume version" /></SelectTrigger><SelectContent>{versions.map((version) => <SelectItem key={version.id} value={version.id}>{`${resumeTitle(version.resume_id) ?? "Resume"} — Version ${version.version_number}`}</SelectItem>)}</SelectContent></Select></div>
             <div><label className="mb-2 block text-xs font-medium">Job description</label><Textarea value={jobDescription} onChange={(event) => setJobDescription(event.target.value)} rows={6} placeholder="Paste the job description here..." /></div>
             <Button className="w-full" onClick={handleAnalyze} disabled={!selectedVersion || !jobDescription.trim() || analyzing}>{analyzing ? <><Loader2 className="size-4 animate-spin" />Analyzing…</> : <><Play className="size-4" />Run Analysis</>}</Button>
             <div className="space-y-2 border-t pt-4"><label className="block text-xs font-medium">Upload a resume</label><Input type="file" accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={handleFileChange} /><Button variant="outline" className="w-full" onClick={handleUploadResume} disabled={!selectedFile || uploadProgress > 0 && uploadProgress < 100}>Upload resume</Button>{uploadProgress > 0 && <Progress value={uploadProgress} />}{uploadMessage && <p className="text-xs text-muted-foreground">{uploadMessage}</p>}</div>

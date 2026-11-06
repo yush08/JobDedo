@@ -7,6 +7,7 @@ import path from "path";
 import type {
   Application,
   Company,
+  EmailDraft,
   ID,
   IsoDateTime,
   Job,
@@ -842,6 +843,39 @@ export class LocalStore implements DataStore {
   }
   async listEmailDrafts() {
     return this.readOnly((s) => s.emailDrafts);
+  }
+  async createEmailDraft(
+    input: Omit<EmailDraft, "id" | "created_at">,
+  ): Promise<EmailDraft> {
+    return this.mutate((s) => {
+      const record: EmailDraft = {
+        ...input,
+        id: uuid(),
+        created_at: now(),
+      };
+      s.emailDrafts.push(record);
+      return record;
+    }).then((r) => r.result);
+  }
+  async updateEmailDraft(
+    id: ID,
+    patch: Partial<
+      Pick<
+        EmailDraft,
+        "subject" | "body" | "draft_type" | "recruiter_id" | "job_id" | "status"
+      >
+    >,
+  ): Promise<EmailDraft | null> {
+    return this.mutate((s) => {
+      const draft = s.emailDrafts.find((d) => d.id === id);
+      if (!draft) return null;
+      for (const [key, value] of Object.entries(patch)) {
+        if (value !== undefined) {
+          (draft as unknown as Record<string, unknown>)[key] = value;
+        }
+      }
+      return draft;
+    }).then((r) => r.result);
   }
   async listAtsReports() {
     return this.readOnly((s) => s.atsReports);

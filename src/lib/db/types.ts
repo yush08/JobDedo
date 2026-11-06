@@ -233,6 +233,18 @@ export interface DataStore {
   ): Promise<Resume>;
   listRecruiters(): Promise<Recruiter[]>;
   listEmailDrafts(): Promise<EmailDraft[]>;
+  createEmailDraft(
+    input: Omit<EmailDraft, "id" | "created_at">,
+  ): Promise<EmailDraft>;
+  updateEmailDraft(
+    id: ID,
+    patch: Partial<
+      Pick<
+        EmailDraft,
+        "subject" | "body" | "draft_type" | "recruiter_id" | "job_id" | "status"
+      >
+    >,
+  ): Promise<EmailDraft | null>;
   listAtsReports(): Promise<AtsReport[]>;
 
   /** Resume Studio - Projects. */

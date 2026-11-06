@@ -85,6 +85,8 @@ export function AtsClient() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [uploadedVersionId, setUploadedVersionId] = useState<string | null>(null);
+  const [uploadedResumeTitle, setUploadedResumeTitle] = useState<string | null>(null);
 
   const loadResumeData = async () => {
     const [reportsResponse, versionsResponse] = await Promise.all([
@@ -166,9 +168,15 @@ export function AtsClient() {
       const payload: unknown = await response.json();
       if (!response.ok) throw new Error(messageFrom(payload, "Upload failed"));
       setUploadProgress(100);
-      setUploadMessage("Resume uploaded. Select its version to run an analysis.");
+      setUploadMessage("Resume uploaded successfully.");
+      // Extract version and resume info from upload response
+      const versionId = typeof payload === "object" && payload !== null ? String(payload.versionNumber) : null;
+      const resumeTitle = typeof payload === "object" && payload !== null ? payload.originalFileName?.replace(/\.(pdf|docx)$/i, "") : null;
+      setUploadedVersionId(versionId ?? null);
+      setUploadedResumeTitle(resumeTitle ?? "Uploaded resume");
+      // Auto-select the newly uploaded version for analysis
+      setSelectedVersion(versionId ?? "");
       setSelectedFile(null);
-      await loadResumeData();
     } catch (reason) {
       setUploadProgress(0);
       setUploadMessage(reason instanceof Error ? reason.message : "Upload failed");

@@ -1,38 +1,46 @@
 import { withErrorHandling } from "@/lib/api/responses";
 import { getDataStore } from "@/lib/db";
 import { randomUUID } from "node:crypto";
+import {
+  DRAFT_TYPES,
+  MissingResumeContentError,
+  generateDraft,
+  isDraftType,
+} from "@/lib/outreach/draft-generator";
 import type { EmailDraft } from "@/types";
 
 interface DraftRequest {
   resumeVersionId?: unknown;
   jobDescription?: unknown;
   draftType?: unknown;
+  recruiterId?: unknown;
+  contextNote?: unknown;
 }
 
 function asText(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-const DRAFT_TYPES = ["internship_outreach", "recruiter_intro", "hiring_manager_intro", "follow_up", "referral_request", "thank_you"] as const;
-
-function isDraftType(value: string): value is EmailDraft["draft_type"] {
-  return (DRAFT_TYPES as readonly string[]).includes(value);
+function jsonError(message: string, status: number): Response {
+  return new Response(JSON.stringify({ error: message }), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 /**
- * POST /api/v1/outreach/draft — Generate a cold-email draft
+ * POST /api/v1/outreach/draft — Generate a cold-email draft (preview only;
+ * nothing is persisted until the client saves via POST /outreach/drafts).
  *
  * Contract:
- * - Takes a resume_version_id and a job_description
- * - Extracts the actual resume content (parsed personal info, experience,
- *   education, skills, projects, achievements) from the source version
- * - Generates a personalised cold email using real resume content and job
- *   requirements — never invents experience, internships, achievements,
- *   projects, recruiter names or contact details
- * - Returns subject, body, and draft metadata for frontend editing and storage
- * - Recipient email is optional; draft can be created without one
- * - Draft is persisted; user must approve before sending
- * - Sending requires explicit approval for each email — never automatic or bulk
+ * - Uses the selected resume version's actual content (parsed payload with
+ *   a raw-text section fallback), the supplied job description, the draft
+ *   type, and — only when explicitly supplied — a recruiter and a context
+ *   note (previous conversation / interview discussion points).
+ * - Never invents experience, achievements, metrics, dates, interview
+ *   topics, or recruiter/company details.
+ * - Returns a 400 with an actionable message when the resume version has
+ *   no extractable content instead of fabricating an email.
  */
 export const POST = withErrorHandling(async (request: Request) => {
   const contentType = request.headers.get("content-type") ?? "";
@@ -41,9 +49,9 @@ export const POST = withErrorHandling(async (request: Request) => {
     !contentType.startsWith("multipart/form-data") &&
     !contentType.startsWith("application/json")
   ) {
-    return new Response(
-      JSON.stringify({ error: "Expected multipart/form-data or application/json" }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
+    return jsonError(
+      "Expected multipart/form-data or application/json",
+      400,
     );
   }
 
@@ -51,34 +59,49 @@ export const POST = withErrorHandling(async (request: Request) => {
 
   if (contentType.startsWith("multipart/form-data")) {
     const formData = await request.formData();
-    const resumeVersionId = formData.get("resume_version_id");
-    const jobDescription = formData.get("job_description");
-    const draftType = formData.get("draft_type");
-    data = { resumeVersionId, jobDescription, draftType };
+    data = {
+      resumeVersionId: formData.get("resume_version_id"),
+      jobDescription: formData.get("job_description"),
+      draftType: formData.get("draft_type"),
+      recruiterId: formData.get("recruiter_id"),
+      contextNote: formData.get("context_note"),
+    };
   } else {
     const body: unknown = await request.json();
-    data = typeof body === "object" && body !== null ? body as DraftRequest : {};
+    data =
+      typeof body === "object" && body !== null ? (body as DraftRequest) : {};
   }
 
   const resumeVersionId = asText(data.resumeVersionId);
   const jobDescription = asText(data.jobDescription);
   const draftType = asText(data.draftType);
-  const selectedDraftType = isDraftType(draftType) ? draftType : "hiring_manager_intro";
+  const recruiterId = asText(data.recruiterId);
+  const contextNote = asText(data.contextNote).trim();
 
   if (!resumeVersionId) {
-    return new Response(
-      JSON.stringify({ error: "resume_version_id is required" }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
-    );
+    return jsonError("resume_version_id is required", 400);
   }
 
   if (!jobDescription || jobDescription.trim().length < 20) {
-    return new Response(
-      JSON.stringify({
-        error: "job_description is required and must be at least 20 characters.",
-      }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
+    return jsonError(
+      "job_description is required and must be at least 20 characters.",
+      400,
     );
+  }
+
+  let selectedDraftType: EmailDraft["draft_type"] = "hiring_manager_intro";
+  if (draftType) {
+    if (!isDraftType(draftType)) {
+      return jsonError(
+        `draft_type must be one of: ${DRAFT_TYPES.join(", ")}`,
+        400,
+      );
+    }
+    selectedDraftType = draftType;
+  }
+
+  if (contextNote.length > 4000) {
+    return jsonError("context_note must be 4000 characters or fewer.", 400);
   }
 
   const db = getDataStore();
@@ -87,260 +110,59 @@ export const POST = withErrorHandling(async (request: Request) => {
   const version = allVersions.find((v) => v.id === resumeVersionId);
 
   if (!version) {
-    return new Response(
-      JSON.stringify({ error: "Resume source version not found" }),
-      { status: 404, headers: { "Content-Type": "application/json" } }
-    );
+    return jsonError("Resume source version not found", 404);
   }
 
   const allResumes = await db.listResumes();
   const resume = allResumes.find((item) => item.id === version.resume_id);
 
   if (!resume) {
-    return new Response(
-      JSON.stringify({ error: "Associated resume not found" }),
-      { status: 404, headers: { "Content-Type": "application/json" } }
-    );
+    return jsonError("Associated resume not found", 404);
   }
 
-  // --- Extract real resume content from the stored raw text ---
-  // Only verifiable facts are used; nothing is invented.
-  const latexSource = version.raw_text;
-
-  // Helper: get text between a section marker and the next section or end
-  function getSectionText(source: string, sectionName: string): string {
-    const openTag = `\\section*\{${sectionName}\\}`;
-    const regex = new RegExp(`${openTag}(.*?)(?:\\\\section|\\ end\\{document\})`, "s");
-    const match = source.match(regex);
-    return match ? match[1].trim() : "";
-  }
-
-  // Extract personal info via simple string search
-  const personalInfo: {
-    full_name?: string;
-    email?: string;
-    phone?: string;
-    linkedin_url?: string;
-    github_url?: string;
-  } = {};
-
-  // Extract name from \textbf{Name} pattern
-  const bfMatch = latexSource.match(/\\\\textbf\{([^}]+)\}/);
-  if (bfMatch) {
-    personalInfo.full_name = bfMatch[1].trim();
-  }
-
-  // Extract email - search for @ pattern with plausible surrounding text
-  const atIdx = latexSource.indexOf("@");
-  if (atIdx >= 0) {
-    const start = Math.max(0, atIdx - 30);
-    const segment = latexSource.substring(start, atIdx);
-    const simpleEmail = segment.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-    if (simpleEmail) {
-      personalInfo.email = simpleEmail[0];
+  // Optional recruiter: used only when explicitly selected by the user.
+  let recruiter: { name: string; title: string | null; company: string | null } | null =
+    null;
+  if (recruiterId) {
+    const recruiters = await db.listRecruiters();
+    const found = recruiters.find((r) => r.id === recruiterId);
+    if (!found) {
+      return jsonError("Recruiter not found", 404);
     }
-  }
-
-  // Extract phone
-  const phoneMatch = latexSource.match(
-    /(?:\\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/
-  );
-  if (phoneMatch) {
-    personalInfo.phone = phoneMatch[0];
-  }
-
-  // Extract LinkedIn
-  const lnMatch = latexSource.match(/linkedin\.com\/in\/[^\s]+/i);
-  if (lnMatch) {
-    personalInfo.linkedin_url = lnMatch[0];
-  }
-
-  // Extract GitHub
-  const ghMatch = latexSource.match(/github\.com\/[^\s]+/i);
-  if (ghMatch) {
-    personalInfo.github_url = ghMatch[0];
-  }
-
-  // Extract summary (text after \section*{Professional Summary})
-  const summaryText = getSectionText(latexSource, "Professional Summary");
-  const summary = summaryText.length > 0 ? summaryText : undefined;
-
-  // Extract experience (text after \section*{Experience})
-  const experienceText = getSectionText(latexSource, "Experience");
-  const experiences: string[] = experienceText ? [experienceText] : [];
-
-  // Extract skills (text after \section*{Skills})
-  const skillsText = getSectionText(latexSource, "Skills");
-  const skills = skillsText.length > 0 ? skillsText : undefined;
-
-  // Extract projects (text after \section*{Projects})
-  const projectsText = getSectionText(latexSource, "Projects");
-  const projects = projectsText.length > 0 ? projectsText : undefined;
-
-  // Extract achievements (text after \section*{Achievements})
-  const achievementsText = getSectionText(latexSource, "Achievements");
-  const achievements = achievementsText.length > 0 ? achievementsText : undefined;
-
-  // --- Build a short, factual candidate profile from what we actually extracted ---
-  const candidateLines: string[] = [];
-
-  if (summary && summary.length > 10) {
-    candidateLines.push(summary);
-  }
-
-  if (experiences && experiences.length > 0) {
-    candidateLines.push(experiences[0]);
-  }
-
-  if (skills) {
-    candidateLines.push(skills);
-  }
-
-  if (projects) {
-    candidateLines.push(projects);
-  }
-
-  if (achievements) {
-    candidateLines.push(achievements);
-  }
-
-  // --- Determine job title and company from the job description ---
-  const jobTitleMatch = jobDescription.match(/[Jj]ob [Tt]itle[:\s]+(.+)/i);
-  const companyMatches = jobDescription.match(/[Cc]ompany[:\s]+(.+)/i);
-  const companyMatch =
-    companyMatches && companyMatches[1]
-      ? companyMatches[1].trim()
-      : jobDescription.match(/[A-Z][A-Za-z0-9&.-]+\s+(Inc\.?|Ltd\.?|LLC|GmbH|Corp)/);
-  const jobTitle = jobTitleMatch ? jobTitleMatch[1].trim() : "the position";
-  const company =
-    companyMatch && companyMatch[1] ? companyMatch[1] : "your company";
-
-  // Helper
-  const firstCandidate = candidateLines.length > 0 ? candidateLines[0] : "";
-
-  // --- Generate subject and body based on draft type ---
-  let subject = "";
-  let body = "";
-
-  switch (selectedDraftType) {
-    case "hiring_manager_intro": {
-      const techSkills = skills && typeof skills === "string" ? skills : "";
-      subject = `Inquiry about ${jobTitle} at ${company}`;
-      const techPart = techSkills
-        ? ` I have hands-on experience with the technical skills relevant to this role, including ${techSkills}.`
-        : "";
-      body = `Dear Hiring Manager,
-
-I am writing to express my strong interest in the ${jobTitle} position at ${company}. After reviewing the job description, I am confident that my background aligns well with the requirements.
-
-${candidateLines.length > 0 ? candidateLines.join(" ") : ""}
-
-${techPart}
-
-I am particularly drawn to ${company} because of its work supporting team success, and I am eager to contribute my skills to your team.
-
-Please find my resume attached for your review. I would welcome the opportunity to discuss how my experience and abilities can support your hiring goals.
-
-Thank you for your time and consideration.
-
-Best regards,
-${personalInfo.full_name || "Candidate"}`;
-      break;
+    let companyName: string | null = null;
+    if (found.company_id) {
+      const companies = await db.listCompanies();
+      companyName =
+        companies.find((c) => c.id === found.company_id)?.name ?? null;
     }
-
-    case "follow_up": {
-      subject = `Follow-up: ${jobTitle} at ${company}`;
-      body = `Dear Hiring Manager,
-
-I am writing to follow up on my application for the ${jobTitle} position at ${company}. I remain very interested in the opportunity and am eager to learn about the status of my application.
-
-${firstCandidate ? ` ${firstCandidate}` : ""}
-
-I am available at your convenience for an interview and can provide any additional information you may need. I have attached my resume for reference.
-
-Thank you for your time and continued consideration.
-
-Best regards,
-${personalInfo.full_name || "Candidate"}`;
-      break;
-    }
-
-    case "referral_request": {
-      subject = `Referral request for ${jobTitle} at ${company}`;
-      body = `Dear Hiring Manager,
-
-I hope this message finds you well. I am writing to request a referral for the ${jobTitle} position at ${company}, as I believe my background aligns well with the team's needs.
-
-${firstCandidate ? ` ${firstCandidate}` : ""}
-
-I have attached my resume for your consideration. I would greatly appreciate any guidance you can provide on the application process.
-
-Thank you for your time.
-
-Best regards,
-${personalInfo.full_name || "Candidate"}`;
-      break;
-    }
-
-    case "thank_you": {
-      subject = `Thank you for the interview opportunity`;
-      body = `Dear ${(personalInfo.full_name || "Candidate").split(" ")[0] || "H"},
-
-Thank you for taking the time to interview me for the ${jobTitle} position at ${company}. I truly enjoyed our conversation and learning more about the team and the role.
-
-${firstCandidate ? ` I particularly appreciated our discussion: ${firstCandidate}` : ""}
-
-Our discussion reinforced my strong interest in this position, particularly my skills and my experience: ${experiences && experiences.length > 0 ? experiences[0] : "the experience highlighted in my resume"}.
-
-Please do not hesitate to contact me if you need any additional information. I look forward to hearing from you regarding next steps.
-
-Best regards,
-${personalInfo.full_name || "Candidate"}`;
-      break;
-    }
-
-    case "internship_outreach": {
-      subject = `Internship Application Inquiry — ${personalInfo.full_name || "Candidate"}`;
-      body = `Dear Hiring Manager,
-
-I am writing to express my strong interest in internship opportunities at ${company}. I am currently pursuing my studies and have developed skills relevant to the ${jobTitle} role through my academic projects and coursework.
-
-${candidateLines.length > 0 ? candidateLines.join(" ") : ""}
-
-I am particularly drawn to ${company} because of its work in ${jobDescription.substring(0, 80) || "technology and innovation"}. I am motivated to learn and contribute to your team.
-
-Please find my resume attached. I would welcome the opportunity to discuss how I can contribute to your team and learn from your experienced professionals.
-
-Thank you for your consideration.
-
-Best regards,
-${personalInfo.full_name || "Candidate"}`;
-      break;
-    }
-
-    default: {
-      subject = `Inquiry about ${jobTitle} at ${company}`;
-      body = `Dear Hiring Manager,
-
-I am writing to express my strong interest in the ${jobTitle} position at ${company}. After reviewing the job description, I am confident that my background aligns well with the requirements.
-
-${candidateLines.length > 0 ? candidateLines.join(" ") : ""}
-
-I am particularly drawn to ${company} because of its work supporting team success, and I am eager to contribute my skills to your team.
-
-Please find my resume attached for your review. I would welcome the opportunity to discuss how my experience and abilities can support your hiring goals.
-
-Thank you for your time and consideration.
-
-Best regards,
-${personalInfo.full_name || "Candidate"}`;
-      break;
-    }
+    recruiter = {
+      name: found.name,
+      title: found.title || null,
+      company: companyName,
+    };
   }
 
-  const draftId = randomUUID();
+  let generated: ReturnType<typeof generateDraft>;
+  try {
+    generated = generateDraft({
+      resumeVersion: version,
+      jobDescription,
+      draftType: selectedDraftType,
+      recruiter,
+      contextNote,
+    });
+  } catch (err) {
+    if (err instanceof MissingResumeContentError) {
+      return jsonError(err.message, 400);
+    }
+    throw err;
+  }
 
-  const draft: Pick<EmailDraft, "id" | "subject" | "body" | "draft_type" | "status"> & {
+  const nowIso = new Date().toISOString();
+  const draft: Pick<
+    EmailDraft,
+    "id" | "subject" | "body" | "draft_type" | "status" | "created_at"
+  > & {
     recipient: string;
     associatedJob: { title: string; company: string; description: string } | null;
     sourceUrl: { type: string; url: string; note: string } | null;
@@ -349,27 +171,23 @@ ${personalInfo.full_name || "Candidate"}`;
     createdAt: string;
     updatedAt: string;
   } = {
-    id: draftId,
-    recipient: personalInfo.email || "",
-    subject: subject.trim(),
-    body: body.trim(),
-    associatedJob:
-      jobTitle && company
-        ? { title: jobTitle, company, description: jobDescription }
-        : null,
-    sourceUrl:
-      personalInfo.linkedin_url
-        ? { type: "linkedin", url: personalInfo.linkedin_url, note: "LinkedIn profile" }
-        : null,
-    contactEvidence:
-      personalInfo.email
-        ? { type: "email", url: `mailto:${personalInfo.email}`, note: "Provided by user" }
-        : null,
-    resumeVersionId: resumeVersionId,
+    id: randomUUID(),
+    recipient: "",
+    subject: generated.subject,
+    body: generated.body,
+    associatedJob: {
+      title: generated.roleTitle ?? "the role",
+      company: generated.company ?? "",
+      description: jobDescription,
+    },
+    sourceUrl: null,
+    contactEvidence: null,
+    resumeVersionId,
     draft_type: selectedDraftType,
     status: "draft",
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    created_at: nowIso,
+    createdAt: nowIso,
+    updatedAt: nowIso,
   };
 
   return new Response(
@@ -379,6 +197,6 @@ ${personalInfo.full_name || "Candidate"}`;
       canCopyRecipient: draft.recipient.length > 0,
       canCopySubject: draft.subject.length > 0,
     }),
-    { status: 200, headers: { "Content-Type": "application/json" } }
+    { status: 200, headers: { "Content-Type": "application/json" } },
   );
 });

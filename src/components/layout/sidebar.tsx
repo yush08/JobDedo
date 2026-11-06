@@ -7,13 +7,20 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { SidebarNav, BottomNav, Brand } from "./sidebar-nav";
 import { Separator } from "@/components/ui/separator";
-
-const STORAGE_KEY = "jobdedo:sidebar-collapsed";
+import {
+  readSidebarCollapsed,
+  writeSidebarCollapsed,
+} from "@/lib/utils/sidebar-preference";
 
 /**
  * Desktop sidebar. Collapsible, persisted in localStorage.
- * - Initial render is always expanded (collapsed=false) for SSR hydration safety.
- * - After hydration, localStorage preference is applied so the state persists.
+ * - Initial render is always expanded (collapsed=false) for SSR hydration
+ *   safety — the server and client render the same markup, so there is no
+ *   hydration mismatch.
+ * - After hydration, the stored preference is applied so an intentional
+ *   collapse survives refresh and navigation. Only an explicit stored "1"
+ *   collapses; anything else (missing, junk, storage throwing) keeps the
+ *   default expanded state — see src/lib/utils/sidebar-preference.ts.
  * - Application data never lives in localStorage; this is purely UI preference.
  */
 export function Sidebar() {
@@ -22,16 +29,16 @@ export function Sidebar() {
   // After hydration, apply saved preference from localStorage.
   // Initial render is always collapsed=false for SSR hydration safety.
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === "1") {
+    if (readSidebarCollapsed()) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setCollapsed(true);
     }
   }, []);
 
   const toggle = () => {
-    setCollapsed(!collapsed);
-    localStorage.setItem(STORAGE_KEY, collapsed ? "0" : "1");
+    const next = !collapsed;
+    setCollapsed(next);
+    writeSidebarCollapsed(next);
   };
 
   return (

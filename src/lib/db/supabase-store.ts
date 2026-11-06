@@ -9,6 +9,7 @@ import type {
   ApplicationEvent,
   Company,
   DiscoveryRun,
+  EmailDraft,
   ID,
   IsoDateTime,
   Job,
@@ -827,6 +828,35 @@ export class SupabaseStore implements DataStore {
     const { data, error } = await this.db.from("email_drafts").select("*").order("created_at", { ascending: false });
     if (error) throw new Error(`Supabase email_drafts: ${error.message}`);
     return (data ?? []) as Collections["emailDrafts"];
+  }
+  async createEmailDraft(
+    input: Omit<EmailDraft, "id" | "created_at">,
+  ): Promise<EmailDraft> {
+    const { data, error } = await this.db
+      .from("email_drafts")
+      .insert(input)
+      .select()
+      .maybeSingle();
+    if (error) throw new Error(`Supabase create email draft: ${error.message}`);
+    return (data as EmailDraft) ?? (input as unknown as EmailDraft);
+  }
+  async updateEmailDraft(
+    id: ID,
+    patch: Partial<
+      Pick<
+        EmailDraft,
+        "subject" | "body" | "draft_type" | "recruiter_id" | "job_id" | "status"
+      >
+    >,
+  ): Promise<EmailDraft | null> {
+    const { data, error } = await this.db
+      .from("email_drafts")
+      .update(patch)
+      .eq("id", id)
+      .select()
+      .maybeSingle();
+    if (error) throw new Error(`Supabase update email draft: ${error.message}`);
+    return (data as EmailDraft | null) ?? null;
   }
   async listAtsReports() {
     const { data, error } = await this.db.from("ats_reports").select("*").order("created_at", { ascending: false });

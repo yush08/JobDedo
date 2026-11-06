@@ -189,7 +189,7 @@ export function checkUnsafeLatex(latexSource: string): string[] {
   for (const match of inputMatches) {
     const arg = match[1].trim();
     // Block absolute paths
-    if (path.isAbsolute(arg)) {
+    if (path.isAbsolute(arg) || /^[a-z]:[\\/]/i.test(arg) || arg.startsWith("\\")) {
       found.push(`\\input{${arg}} (absolute path blocked)`);
       continue;
     }

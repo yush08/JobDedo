@@ -1044,6 +1044,16 @@ export class SupabaseStore implements DataStore {
     return (data as AtsReport) ?? input;
   }
 
+  /** Dev cleanup: delete every ATS report for the current profile only. */
+  async deleteAtsReports(): Promise<number> {
+    const { error, count } = await this.db
+      .from("ats_reports")
+      .delete({ count: "exact" })
+      .eq("profile_id", DEFAULT_PROFILE_ID);
+    if (error) throw new Error(`Supabase delete ats reports: ${error.message}`);
+    return count ?? 0;
+  }
+
   /* ---------------- resume studio - original file storage ---------------- */
 
   async storeResumeFile(

@@ -13,6 +13,38 @@ import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import type { AtsReport, Resume, ResumeVersion } from "@/types";
 
+interface RequirementEvidence {
+  requirement: string;
+  classification: "required" | "preferred" | "neutral";
+  matched: boolean;
+  evidenceLevel: "none" | "skill_mention" | "project_experience" | "measurable_outcome";
+  excerpt?: string;
+  coverageContribution: number;
+  alignmentContribution: number;
+}
+
+interface AtsExplanation {
+  documentQuality: {
+    checks: Array<{ name: string; passed: boolean; detail: string }>;
+    score: number;
+  };
+  jobCoverage: {
+    totalRequirements: number;
+    matchedRequirements: number;
+    totalWeight: number;
+    matchedWeight: number;
+    score: number;
+  };
+  evidenceAlignment: {
+    evaluatedRequirements: number;
+    scoredRequirements: number;
+    totalWeight: number;
+    alignmentWeight: number;
+    score: number;
+  };
+  requirements: RequirementEvidence[];
+}
+
 interface AtsAnalysis {
   documentQualityScore: number;
   jobCoverageScore: number;
@@ -21,6 +53,7 @@ interface AtsAnalysis {
   formattingIssues: string[];
   suggestions: string[];
   disclaimer: string;
+  explanation?: AtsExplanation;
 }
 
 interface AtsAnalysisResponse {
@@ -31,6 +64,7 @@ interface AtsAnalysisResponse {
   formattingIssues: unknown[];
   suggestions: unknown[];
   disclaimer?: unknown;
+  explanation?: unknown;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -82,6 +116,17 @@ function isAnalysis(value: unknown): value is AtsAnalysisResponse {
     typeof value.jobCoverageScore === "number" && typeof value.alignmentScore === "number" &&
     Array.isArray(value.missingKeywords) && Array.isArray(value.formattingIssues) &&
     Array.isArray(value.suggestions);
+}
+
+function isAtsExplanation(value: unknown): value is AtsExplanation {
+  if (!isRecord(value)) return false;
+  const dq = value.documentQuality;
+  const jc = value.jobCoverage;
+  const ea = value.evidenceAlignment;
+  return isRecord(dq) && Array.isArray(dq.checks) && typeof dq.score === "number" &&
+    isRecord(jc) && typeof jc.score === "number" &&
+    isRecord(ea) && typeof ea.score === "number" &&
+    Array.isArray(value.requirements);
 }
 
 export function AtsClient() {
@@ -152,6 +197,7 @@ export function AtsClient() {
         disclaimer: typeof payload.disclaimer === "string"
           ? payload.disclaimer
           : "Scores are estimates, not guarantees of employer ATS results.",
+        explanation: isAtsExplanation(payload.explanation) ? payload.explanation : undefined,
       });
       await loadResumeData();
     } catch (reason) {
@@ -209,7 +255,7 @@ export function AtsClient() {
         <Card className="card-shadow">
           <CardHeader><CardTitle>Analysis Results</CardTitle></CardHeader>
           <CardContent className="space-y-4">
-            {analysisResult ? <><div className="grid grid-cols-3 gap-3"><ScoreCard label="Document Quality" value={analysisResult.documentQualityScore} /><ScoreCard label="Job Coverage" value={analysisResult.jobCoverageScore} /><ScoreCard label="Evidence Alignment" value={analysisResult.evidenceAlignmentScore} /></div><ResultList label="Missing Keywords" items={analysisResult.missingKeywords} /><ResultList label="Formatting Issues" items={analysisResult.formattingIssues} /><ResultList label="Suggestions" items={analysisResult.suggestions} /><p className="text-xs italic text-muted-foreground">{analysisResult.disclaimer}</p></> : <div className="flex flex-col items-center py-12 text-muted-foreground"><ScanSearch className="mb-2 size-10 opacity-30" /><p>Run an analysis to see results.</p></div>}
+            {analysisResult ? <><div className="grid grid-cols-3 gap-3"><ScoreCard label="Document Quality" value={analysisResult.documentQualityScore} /><ScoreCard label="Job Coverage" value={analysisResult.jobCoverageScore} /><ScoreCard label="Evidence Alignment" value={analysisResult.evidenceAlignmentScore} /></div><ResultList label="Missing Keywords" items={analysisResult.missingKeywords} /><ResultList label="Formatting Issues" items={analysisResult.formattingIssues} /><ResultList label="Suggestions" items={analysisResult.suggestions} />{analysisResult.explanation && <ExplanationPanel explanation={analysisResult.explanation} />}<p className="text-xs italic text-muted-foreground">{analysisResult.disclaimer}</p></> : <div className="flex flex-col items-center py-12 text-muted-foreground"><ScanSearch className="mb-2 size-10 opacity-30" /><p>Run an analysis to see results.</p></div>}
           </CardContent>
         </Card>
       </div>
@@ -224,4 +270,103 @@ function ScoreCard({ label, value }: { label: string; value: number }) {
 
 function ResultList({ label, items }: { label: string; items: string[] }) {
   return <div><h3 className="mb-2 text-xs font-semibold">{label}</h3>{items.length === 0 ? <p className="text-xs text-muted-foreground">None.</p> : <ul className="space-y-1 text-xs text-muted-foreground">{items.map((item) => <li key={item}>• {item}</li>)}</ul>}</div>;
+}
+
+const EVIDENCE_LABELS: Record<RequirementEvidence["evidenceLevel"], string> = {
+  none: "No evidence",
+  skill_mention: "Skill mention",
+  project_experience: "Project/experience",
+  measurable_outcome: "Measurable outcome",
+};
+
+const CLASSIFICATION_LABELS: Record<RequirementEvidence["classification"], string> = {
+  required: "Required",
+  preferred: "Preferred",
+  neutral: "Neutral",
+};
+
+function ExplanationPanel({ explanation }: { explanation: AtsExplanation }) {
+  const [open, setOpen] = useState(false);
+  const { documentQuality, jobCoverage, evidenceAlignment, requirements } = explanation;
+
+  return (
+    <div className="rounded-lg border">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between p-3 text-left text-xs font-semibold"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>How these scores were calculated</span>
+        <span className="text-muted-foreground">{open ? "−" : "+"}</span>
+      </button>
+      {open && (
+        <div className="space-y-4 border-t p-3 text-xs">
+          <div>
+            <h4 className="mb-1 font-semibold">Document Quality — {documentQuality.score}</h4>
+            <ul className="space-y-0.5 text-muted-foreground">
+              {documentQuality.checks.map((check) => (
+                <li key={check.name} className="flex gap-2">
+                  <span className={check.passed ? "text-green-600" : "text-red-600"}>
+                    {check.passed ? "✓" : "✗"}
+                  </span>
+                  <span className="font-medium">{check.name}</span>
+                  <span>{check.detail}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="mb-1 font-semibold">
+              Job Coverage — {jobCoverage.score}
+              <span className="ml-2 font-normal text-muted-foreground">
+                ({jobCoverage.matchedRequirements}/{jobCoverage.totalRequirements} requirements matched,
+                weight {jobCoverage.matchedWeight}/{jobCoverage.totalWeight})
+              </span>
+            </h4>
+          </div>
+
+          <div>
+            <h4 className="mb-1 font-semibold">
+              Evidence Alignment — {evidenceAlignment.score}
+              <span className="ml-2 font-normal text-muted-foreground">
+                ({evidenceAlignment.scoredRequirements}/{evidenceAlignment.evaluatedRequirements} requirements
+                with evidence, weight {evidenceAlignment.alignmentWeight}/{evidenceAlignment.totalWeight})
+              </span>
+            </h4>
+          </div>
+
+          <div>
+            <h4 className="mb-2 font-semibold">Per-requirement breakdown</h4>
+            <div className="space-y-1.5">
+              {requirements.map((req) => (
+                <div key={req.requirement} className="rounded border p-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`font-medium ${req.matched ? "text-green-700" : "text-red-700"}`}>
+                      {req.matched ? "●" : "○"}
+                    </span>
+                    <span>{req.requirement}</span>
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
+                      {CLASSIFICATION_LABELS[req.classification]}
+                    </span>
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
+                      {EVIDENCE_LABELS[req.evidenceLevel]}
+                    </span>
+                    <span className="ml-auto text-muted-foreground">
+                      coverage +{req.coverageContribution} · alignment +{req.alignmentContribution}
+                    </span>
+                  </div>
+                  {req.excerpt && (
+                    <p className="mt-1 truncate text-[10px] italic text-muted-foreground" title={req.excerpt}>
+                      “{req.excerpt}”
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

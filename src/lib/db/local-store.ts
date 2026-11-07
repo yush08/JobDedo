@@ -1044,6 +1044,15 @@ export class LocalStore implements DataStore {
     }).then((r) => r.result);
   }
 
+  /** Dev cleanup: delete every ATS report. Only `atsReports` is touched. */
+  async deleteAtsReports(): Promise<number> {
+    return this.mutate((s) => {
+      const removed = s.atsReports.length;
+      s.atsReports = [];
+      return removed;
+    }).then((r) => r.result);
+  }
+
   /* ---------------- resume studio - original file storage ---------------- */
 
   async storeResumeFile(

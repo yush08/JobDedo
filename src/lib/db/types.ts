@@ -292,6 +292,12 @@ export interface DataStore {
   createAtsReport(
     input: Omit<AtsReport, "id" | "created_at">,
   ): Promise<AtsReport>;
+  /**
+   * Delete every stored ATS analysis report and return how many were
+   * removed. Touches only the ATS report collection — resumes, resume
+   * versions, extracted text, profiles and applications are untouched.
+   */
+  deleteAtsReports(): Promise<number>;
 
   /** Resume Studio - Original file storage. */
   storeResumeFile(

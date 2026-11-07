@@ -11,8 +11,16 @@ import {
 } from "@/features/ats/scoring";
 
 /**
- * Regression tests for the ATS scoring engine using the two real PDF fixtures
+ * Regression tests for the ATS scoring engine using two synthetic PDF fixtures
  * and the same Data Science Intern job description.
+ *
+ * Fixtures (both fictional, both committed to the repository — no personal
+ * files are needed to run this suite from a clean checkout):
+ * - `anonymized_resume_fixture.pdf` — Alex Morgan: analytics-flavoured
+ *   resume (Python/SQL/Pandas project evidence, NumPy only as a skill).
+ * - `synthetic_resume_fixture.pdf` — Taylor Quinn: frontend-flavoured
+ *   resume (React/TypeScript project evidence, a Python/NLP chatbot
+ *   project, no SQL).
  *
  * Ground rules asserted here:
  * - evidence comes from the extracted PDF text, never a master profile
@@ -21,8 +29,8 @@ import {
  * - the explanation must correspond to the numbers it explains
  */
 
-const TANYA_PDF = join(__dirname, "tanya_resume.pdf");
-const KUMAR_PDF = join(__dirname, "Kumar_Ayush_s_Resume (1).pdf");
+const ALEX_PDF = join(__dirname, "anonymized_resume_fixture.pdf");
+const TAYLOR_PDF = join(__dirname, "synthetic_resume_fixture.pdf");
 
 const DATA_SCIENCE_JD = `Data Science Intern
 
@@ -45,25 +53,25 @@ async function extractPdf(path: string): Promise<string> {
 }
 
 describe("ATS scoring — PDF fixture regression", () => {
-  let tanyaText: string;
-  let kumarText: string;
+  let alexText: string;
+  let taylorText: string;
   let requirements: Requirement[];
-  let tanya: AtsScoringResult;
-  let kumar: AtsScoringResult;
+  let alex: AtsScoringResult;
+  let taylor: AtsScoringResult;
 
   beforeAll(async () => {
-    tanyaText = await extractPdf(TANYA_PDF);
-    kumarText = await extractPdf(KUMAR_PDF);
+    alexText = await extractPdf(ALEX_PDF);
+    taylorText = await extractPdf(TAYLOR_PDF);
     requirements = extractJobRequirements(DATA_SCIENCE_JD);
-    tanya = scoreResumeAgainstJob(tanyaText, requirements);
-    kumar = scoreResumeAgainstJob(kumarText, requirements);
+    alex = scoreResumeAgainstJob(alexText, requirements);
+    taylor = scoreResumeAgainstJob(taylorText, requirements);
   }, 30_000);
 
   it("extracts real text from both PDF fixtures", () => {
-    expect(tanyaText).toContain("Tanya Singh");
-    expect(kumarText).toContain("Kumar Ayush");
-    expect(tanyaText.length).toBeGreaterThan(500);
-    expect(kumarText.length).toBeGreaterThan(500);
+    expect(alexText).toContain("Alex Morgan");
+    expect(taylorText).toContain("Taylor Quinn");
+    expect(alexText.length).toBeGreaterThan(500);
+    expect(taylorText.length).toBeGreaterThan(500);
   });
 
   it("derives requirements from the supplied JD only", () => {
@@ -77,10 +85,10 @@ describe("ATS scoring — PDF fixture regression", () => {
     expect(byKey.get("python")!.weight).toBeGreaterThan(byKey.get("scikit-learn")!.weight);
   });
 
-  it("recognizes Kumar's analytics project evidence", () => {
-    const byReq = new Map(kumar.explanation.requirements.map((r) => [r.requirement.toLowerCase(), r]));
+  it("recognizes Alex's analytics project evidence", () => {
+    const byReq = new Map(alex.explanation.requirements.map((r) => [r.requirement.toLowerCase(), r]));
 
-    // Python, SQL and Pandas all appear in his "BI Platform" / project lines.
+    // Python, SQL and Pandas all appear in Alex's "BI Platform" project line.
     for (const key of ["python", "sql", "pandas"]) {
       const entry = byReq.get(key);
       expect(entry, `missing explanation for ${key}`).toBeDefined();
@@ -91,19 +99,19 @@ describe("ATS scoring — PDF fixture regression", () => {
     }
   });
 
-  it("recognizes NumPy as a skill mention for Kumar, not demonstrated use", () => {
-    const numpy = kumar.explanation.requirements.find((r) => r.requirement.toLowerCase() === "numpy");
+  it("recognizes NumPy as a skill mention for Alex, not demonstrated use", () => {
+    const numpy = alex.explanation.requirements.find((r) => r.requirement.toLowerCase() === "numpy");
     expect(numpy).toBeDefined();
     expect(numpy!.matched).toBe(true);
     // NumPy is only listed under Technical Skills — a mention, not project use.
     expect(numpy!.evidenceLevel).toBe("skill_mention");
     // A mention must score below demonstrated use.
-    const python = kumar.explanation.requirements.find((r) => r.requirement.toLowerCase() === "python");
+    const python = alex.explanation.requirements.find((r) => r.requirement.toLowerCase() === "python");
     expect(numpy!.alignmentContribution).toBeLessThan(python!.alignmentContribution);
   });
 
-  it("recognizes Tanya's chatbot as Python evidence", () => {
-    const python = tanya.explanation.requirements.find((r) => r.requirement.toLowerCase() === "python");
+  it("recognizes Taylor's chatbot as Python evidence", () => {
+    const python = taylor.explanation.requirements.find((r) => r.requirement.toLowerCase() === "python");
     expect(python).toBeDefined();
     expect(python!.matched).toBe(true);
     expect(python!.evidenceLevel).toBe("project_experience");
@@ -111,7 +119,7 @@ describe("ATS scoring — PDF fixture regression", () => {
   });
 
   it("gives neither resume unsupported machine-learning evidence", () => {
-    for (const [name, result] of [["Tanya", tanya], ["Kumar", kumar]] as const) {
+    for (const [name, result] of [["Alex", alex], ["Taylor", taylor]] as const) {
       for (const key of ["scikit-learn", "matplotlib", "statistical modelling"]) {
         const entry = result.explanation.requirements.find(
           (r) => r.requirement.toLowerCase() === key,
@@ -132,7 +140,7 @@ describe("ATS scoring — PDF fixture regression", () => {
   });
 
   it("returns no unexplained baseline score", () => {
-    for (const result of [tanya, kumar]) {
+    for (const result of [alex, taylor]) {
       const { documentQuality, jobCoverage, evidenceAlignment } = result.explanation;
       // Every score must be reproducible from its own explanation.
       expect(documentQuality.score).toBe(result.documentQuality.score);
@@ -153,12 +161,12 @@ describe("ATS scoring — PDF fixture regression", () => {
       expect(Math.abs(alignmentSum - evidenceAlignment.alignmentWeight)).toBeLessThan(1e-9);
     }
     // The two resumes differ, so neither is a fixed constant.
-    expect(tanya.coverage.score).not.toBe(kumar.coverage.score);
-    expect(tanya.alignment.score).not.toBe(kumar.alignment.score);
+    expect(taylor.coverage.score).not.toBe(alex.coverage.score);
+    expect(taylor.alignment.score).not.toBe(alex.alignment.score);
   });
 
   it("keeps each requirement's evidence consistent with its contribution", () => {
-    for (const result of [tanya, kumar]) {
+    for (const result of [alex, taylor]) {
       const byKey = new Map(requirements.map((r) => [r.key, r]));
       for (const entry of result.explanation.requirements) {
         const req = [...byKey.values()].find((r) => r.label === entry.requirement);
@@ -184,7 +192,7 @@ describe("ATS scoring — PDF fixture regression", () => {
   });
 
   it("scores document quality from document checks only", () => {
-    for (const [name, result] of [["Tanya", tanya], ["Kumar", kumar]] as const) {
+    for (const [name, result] of [["Alex", alex], ["Taylor", taylor]] as const) {
       const checks = result.documentQuality.checks;
       // 100 only when every explicitly defined check passes.
       const allPassed = checks.every((c) => c.passed);
@@ -196,11 +204,11 @@ describe("ATS scoring — PDF fixture regression", () => {
     // Document quality is independent of the job description: same text,
     // same score, regardless of requirements supplied.
     const otherJd = extractJobRequirements("Senior React Developer\nRequired: Kubernetes, Go");
-    expect(scoreResumeAgainstJob(tanyaText, otherJd).documentQuality.score).toBe(
-      tanya.documentQuality.score,
+    expect(scoreResumeAgainstJob(alexText, otherJd).documentQuality.score).toBe(
+      alex.documentQuality.score,
     );
-    expect(scoreResumeAgainstJob(kumarText, otherJd).documentQuality.score).toBe(
-      kumar.documentQuality.score,
+    expect(scoreResumeAgainstJob(taylorText, otherJd).documentQuality.score).toBe(
+      taylor.documentQuality.score,
     );
   });
 
@@ -209,31 +217,31 @@ describe("ATS scoring — PDF fixture regression", () => {
 Required skills: React, TypeScript, Next.js
 Preferred skills: Tailwind CSS`;
     const reactReqs = extractJobRequirements(reactJd);
-    const tanyaReact = scoreResumeAgainstJob(tanyaText, reactReqs);
-    const kumarReact = scoreResumeAgainstJob(kumarText, reactReqs);
+    const taylorReact = scoreResumeAgainstJob(taylorText, reactReqs);
+    const alexReact = scoreResumeAgainstJob(alexText, reactReqs);
 
     // A different JD must yield different coverage for at least one resume —
     // scores are derived from the JD, not fixed.
-    const tanyaChanged = tanyaReact.coverage.score !== tanya.coverage.score;
-    const kumarChanged = kumarReact.coverage.score !== kumar.coverage.score;
-    expect(tanyaChanged || kumarChanged).toBe(true);
+    const taylorChanged = taylorReact.coverage.score !== taylor.coverage.score;
+    const alexChanged = alexReact.coverage.score !== alex.coverage.score;
+    expect(taylorChanged || alexChanged).toBe(true);
 
-    // Tanya lists React/JavaScript; Kumar does not — coverage must reflect that.
-    const tanyaReactEntry = tanyaReact.explanation.requirements.find((r) =>
+    // Taylor lists React/TypeScript; Alex does not — coverage must reflect that.
+    const taylorReactEntry = taylorReact.explanation.requirements.find((r) =>
       r.requirement.toLowerCase().includes("react"),
     );
-    const kumarReactEntry = kumarReact.explanation.requirements.find((r) =>
+    const alexReactEntry = alexReact.explanation.requirements.find((r) =>
       r.requirement.toLowerCase().includes("react"),
     );
-    expect(tanyaReactEntry!.matched).toBe(true);
-    expect(kumarReactEntry!.matched).toBe(false);
+    expect(taylorReactEntry!.matched).toBe(true);
+    expect(alexReactEntry!.matched).toBe(false);
 
     // Missing lists follow the new JD.
-    expect(tanyaReact.missingKeywords).not.toContain("React");
-    expect(kumarReact.missingKeywords).toContain("React");
+    expect(taylorReact.missingKeywords).not.toContain("React");
+    expect(alexReact.missingKeywords).toContain("React");
 
     // Evidence alignment also moves with the JD.
-    expect(tanyaReact.alignment.score).not.toBe(tanya.alignment.score);
+    expect(taylorReact.alignment.score).not.toBe(taylor.alignment.score);
   });
 
   it("does not fabricate requirements that are absent from the JD", () => {
@@ -241,8 +249,8 @@ Preferred skills: Tailwind CSS`;
     // The JD never mentions these, so they must not be invented as gaps.
     expect(keys).not.toContain("machine learning");
     expect(keys).not.toContain("power bi");
-    expect(tanya.missingKeywords).not.toContain("Machine Learning");
-    expect(kumar.missingKeywords).not.toContain("Power BI");
+    expect(taylor.missingKeywords).not.toContain("Machine Learning");
+    expect(alex.missingKeywords).not.toContain("Power BI");
   });
 });
 
